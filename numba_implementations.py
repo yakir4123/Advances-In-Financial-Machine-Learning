@@ -14,15 +14,16 @@ def imbalance_dollar_bar(prices: np.ndarray, qty: np.ndarray) -> np.ndarray:
     Returns:
         imbalance dollar bars
     """
-    res = np.zeros(len(prices) // 10, dtype=np.int32)
+    bucket_size = int(1e7)
+    res = np.zeros((7, bucket_size), dtype=np.float32)
     res_index = 0
     prev_T_star = 0
     T = 1
-    sum_v_t = 0
     prev_bt = 1
     prev_p_t = 0
     theta_T = 0
-    v_t_given_bt_1 = 0
+    E_T = 1.0
+    estimation_v_plus_v_minus = 0
     while T + prev_T_star < len(prices):
         p_t = prices[prev_T_star + T]
         q_t = qty[prev_T_star + T]
@@ -30,23 +31,55 @@ def imbalance_dollar_bar(prices: np.ndarray, qty: np.ndarray) -> np.ndarray:
         prev_p_t = p_t
 
         theta_T += b_t * p_t * q_t
-        if res_index == 0:
-            E_T = 1.0
-        else:
-            E_T = res[:res_index].mean()
-        # 2v+ - E_v_t can be ewm of bt * v_t
-        v_t_given_bt_1 += p_t * q_t if b_t == 1 else 0.0
-        # len(bt==1) / len(bt) * sum(vt | bt == 1) / len(bt==1) => sum(vt | bt == 1) / len(bt)
-        v_plus = v_t_given_bt_1 / (prev_T_star + T)
+        estimation_v_plus_v_minus = (0.9 * estimation_v_plus_v_minus) + 0.1 * (
+            b_t * p_t * q_t
+        )
+        if abs(theta_T) >= E_T * abs(estimation_v_plus_v_minus):
+            if res_index >= res.shape[1]:
+                # Resize the array if it's full
+                new_res = np.zeros((7, res.shape[1] + bucket_size), dtype=np.float32)
+                new_res[:, : res.shape[1]] = res
+                res = new_res
 
-        sum_v_t += p_t * q_t
-        E_v_t = sum_v_t / (prev_T_star + T)
-        if abs(theta_T) >= E_T * abs((2 * v_plus - E_v_t)):
-            res[res_index] = prev_T_star + T
+            res[0, res_index] = prev_T_star + T  # open time
+            res[1, res_index] = prices[prev_T_star]  # open
+            res[2, res_index] = prices[prev_T_star + T]  # close
+            res[3, res_index] = prices[prev_T_star : prev_T_star + T].max()  # high
+            res[4, res_index] = prices[prev_T_star : prev_T_star + T].min()  # low
+            res[5, res_index] = qty[prev_T_star : prev_T_star + T].sum()  # volume
+            res[6, res_index] = (
+                qty[prev_T_star : prev_T_star + T]
+                * prices[prev_T_star : prev_T_star + T]
+            ).sum()  # dollars
             res_index += 1
             prev_T_star += T
+
+            # estimate E_T
+            E_T = 0.5 * E_T + 0.5 * T
             T = 1
             theta_T = 0
         else:
             T += 1
-    return res[:res_index]
+    return res[:, :res_index]
+
+
+@njit
+def getTEvents(timestamps: np.ndarray, yt: np.ndarray, h: float) -> np.ndarray:
+    t_events = np.empty(len(timestamps), dtype=timestamps.dtype)
+    s_pos = 0.0
+    s_neg = 0.0
+    diff = np.diff(yt)
+    event_count = 0
+    for t in range(len(diff)):
+        dt = diff[t]
+        s_pos = max(0.0, s_pos + dt)
+        s_neg = min(0.0, s_neg + dt)
+        if s_neg < -h:
+            s_neg = 0
+            t_events[event_count] = timestamps[t + 1]
+            event_count += 1
+        elif s_pos > h:
+            s_pos = 0
+            t_events[event_count] = timestamps[t + 1]
+            event_count += 1
+    return t_events[:event_count]
