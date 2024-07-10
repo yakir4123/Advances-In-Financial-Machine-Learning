@@ -1,1 +1,8 @@
 pandas
+matplotlib
+numpy
+plotly
+statsmodels
+numba
+scikit-learn
+lightweight-charts
