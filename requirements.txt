@@ -6,3 +6,4 @@ statsmodels
 numba
 scikit-learn
 lightweight-charts
+dask[dataframe]
