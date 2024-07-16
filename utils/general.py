@@ -32,7 +32,7 @@ def load_df(file_path: str) -> pd.DataFrame:
         ddf = dd.read_parquet(file_path)
     else:
         raise ValueError("Unknown file_type")
-    return ddf
+    return reduce_memory_usage(ddf.compute())
 
 
 def reduce_memory_usage(df: pd.DataFrame) -> pd.DataFrame:
