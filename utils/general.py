@@ -1,11 +1,12 @@
 import gc
 import os
-from typing import Literal
+import glob
 
 import dask.dataframe as dd
 import numpy as np
 import pandas as pd
 from numba import njit
+from tqdm import tqdm
 
 
 def convert_transaction_to_parquet(csv_file_path: str) -> None:
@@ -37,7 +38,6 @@ def load_df(file_path: str) -> pd.DataFrame:
 
 def reduce_memory_usage(df: pd.DataFrame) -> pd.DataFrame:
     start_mem = df.memory_usage().sum() / 1024**2
-    print(f"Memory usage of dataframe is {start_mem:.2f} MB")
 
     for col in df.columns:
         col_type = df[col].dtype
@@ -79,10 +79,33 @@ def reduce_memory_usage(df: pd.DataFrame) -> pd.DataFrame:
             if num_unique_values / num_total_values < 0.5:
                 df[col] = df[col].astype("category")
 
-    end_mem = df.memory_usage().sum() / 1024**2
-    print(f"Memory usage after optimization is: {end_mem:.2f} MB")
-    print(f"Decreased by {(start_mem - end_mem) / start_mem * 100:.1f}%")
     return df
+
+
+def load_transactions_and_generate(file_path: str, bars_generator: callable, **generator_kwargs):
+    """
+    Process CSV transactions files and generate for each file and do it periodically to save memory.
+
+    Parameters:
+    file_path: file_path containing the transactions, allow glob-string.
+    bars_generator: method that return the dataframe of the bars
+
+    Returns:
+    pd.DataFrame: DataFrame with consolidated bars.
+    """
+    all_range_bars = []
+    last_bar = None
+
+    file_names = glob.glob(file_path)
+    file_names.sort()
+    for file_name in tqdm(file_names):
+        df = load_df(file_name)
+        range_bars_df, last_bar = bars_generator(df, last_bar, **generator_kwargs)
+        all_range_bars.append(range_bars_df)
+        del df
+        gc.collect()
+
+    return pd.concat(all_range_bars).sort_index()
 
 
 def returns(prices):

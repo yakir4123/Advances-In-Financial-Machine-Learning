@@ -7,3 +7,4 @@ numba
 scikit-learn
 lightweight-charts
 dask[dataframe]
+tqdm

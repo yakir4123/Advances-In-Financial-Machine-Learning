@@ -24,16 +24,22 @@ def apply_tp_sl(close: pd.Series, events, target, tp_scale, sl_scale, molecule):
     return out
 
 
-# including metalabeleing possibility
-def get_events_tripple_barrier(
-    close: pd.Series,
-    t0: np.ndarray,
-    tp_scale: float,
-    sl_scale: float,
-    target: pd.Series,
-    min_return: float,
-    t1: pd.Series | bool = False,
-    side: pd.Series = None,
+def get_vertical_barrier(bars: pd.DataFrame, t0: pd.Series, ms: int) -> pd.Series:
+    t1 = bars.index.searchsorted(t0 + ms)
+    t1 = t1[t1 < len(bars)]
+    # timestamp of event -> timestamp of closed bar that as a vertical barrier
+    return pd.Series(bars.index[t1].values, index=t0[:t1.shape[0]])
+
+
+def get_events_triple_barrier(
+        close: pd.Series,
+        t0: np.ndarray,
+        tp_scale: float,
+        sl_scale: float,
+        target: pd.Series,
+        min_return: float,
+        t1: pd.Series | bool = False,
+        side: pd.Series = None,
 ) -> pd.DataFrame:
     """
     Snippet 3.3
@@ -74,3 +80,19 @@ def get_events_tripple_barrier(
     if side is None:
         events = events.drop("side", axis=1)
     return events
+
+
+def get_bins(events: pd.DataFrame, close: pd.Series, t1: pd.Series | None = None):
+    events_ = events.dropna(subset=['touch'])
+    px = events_.index.union(events_['touch'].values).drop_duplicates()
+    px = close.reindex(px, method='bfill')
+    out = pd.DataFrame(index=events_.index)
+    out['ret'] = px.loc[events_['touch'].values].values / px.loc[events_.index] - 1
+    if 'side' in events_:
+        out['ret'] *= events_['side']  # meta-labeling
+    if 'side' in events_:
+        out.loc[out['ret'] <= 0, 'bin'] = 0  # meta-labeling
+    out['bin'] = np.sign(out['ret'])
+    if t1 is not None:
+        out[events_['touch'].isin(t1)] = 0
+    return out
