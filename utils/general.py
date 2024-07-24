@@ -151,3 +151,16 @@ def get_t_events_dynamic_h(
             t_events[event_count] = timestamp
             event_count += 1
     return t_events[:event_count]
+
+
+def get_daily_vol(bars: pd.DataFrame, span0: int = 100):
+    # daily vol, reindexed to close
+    ms_a_day = 24 * 60 * 60 * 1000
+
+    df0 = bars.index.searchsorted(bars.index - ms_a_day)
+    df0 = df0[df0 > 0]
+    df0 = pd.Series(bars.index[df0 - 1], index=bars.index[bars.shape[0] - df0.shape[0]:])
+    df0 = bars.close.loc[df0.index] / bars.close.loc[df0.values].values - 1  # daily returns
+    df0 = df0.ewm(span=span0).std()
+    return df0.rename('daily_vol').dropna()
+
