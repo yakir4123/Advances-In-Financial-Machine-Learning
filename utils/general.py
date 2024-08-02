@@ -1,6 +1,7 @@
 import gc
 import os
 import glob
+import re
 
 import dask.dataframe as dd
 import numpy as np
@@ -82,12 +83,40 @@ def reduce_memory_usage(df: pd.DataFrame) -> pd.DataFrame:
     return df
 
 
-def load_transactions_and_generate(file_path: str, bars_generator: callable, **generator_kwargs):
+def find_files_with_regex(path: str, recursive=True):
+    """
+    Finds all files in the given directory that match the provided regex pattern.
+
+    :param path: The path to a file, accept regex.
+    :param recursive: Whether to search subdirectories recursively. Defaults to True.
+    :return: A list of file paths that match the regex pattern.
+    """
+    # Split the directory and pattern
+    directory, pattern = path.rsplit("/", 1)
+    matching_files = []
+    regex = re.compile(pattern)
+
+    for root, _, files in os.walk(directory):
+        for file in files:
+            if regex.match(file):
+                matching_files.append(os.path.join(root, file))
+        if not recursive:
+            break
+
+    return matching_files
+
+
+def load_transactions_and_generate(
+    file_path: str | list[str],
+    bars_generator: callable,
+    progress_bar: bool = True,
+    **generator_kwargs
+):
     """
     Process CSV transactions files and generate for each file and do it periodically to save memory.
 
     Parameters:
-    file_path: file_path containing the transactions, allow glob-string.
+    file_path: file_path containing the transactions, allow regex-string or list of files.
     bars_generator: method that return the dataframe of the bars
 
     Returns:
@@ -96,17 +125,28 @@ def load_transactions_and_generate(file_path: str, bars_generator: callable, **g
     all_range_bars = []
     last_bar_transactions = None
 
-    file_names = glob.glob(file_path)
+    if type(file_path) == str:
+        file_names = find_files_with_regex(file_path)
+    else:
+        file_names = file_path
     file_names.sort()
-    for file_name in tqdm(file_names):
+    if progress_bar:
+        _tqdm = tqdm
+    else:
+        _tqdm = lambda x: x
+    for file_name in _tqdm(file_names):
         df = load_df(file_name)
-        bars_df, last_bar_transactions = bars_generator(df, last_bar_transactions, **generator_kwargs)
+        bars_df, last_bar_transactions = bars_generator(
+            df, last_bar_transactions, **generator_kwargs
+        )
         all_range_bars.append(bars_df)
         del df
         gc.collect()
 
     if last_bar_transactions is not None:
-        bars_df = bars_generator(last_bar_transactions, None, **generator_kwargs)
+        bars_df, _ = bars_generator(
+            last_bar_transactions, None, is_last_transactions=True, **generator_kwargs
+        )
         all_range_bars.append(bars_df)
 
     return pd.concat(all_range_bars).sort_index()
@@ -122,8 +162,11 @@ def get_daily_vol(bars: pd.DataFrame, span0: int = 100):
 
     df0 = bars.index.searchsorted(bars.index - ms_a_day)
     df0 = df0[df0 > 0]
-    df0 = pd.Series(bars.index[df0 - 1], index=bars.index[bars.shape[0] - df0.shape[0]:])
-    df0 = bars.close.loc[df0.index] / bars.close.loc[df0.values].values - 1  # daily returns
+    df0 = pd.Series(
+        bars.index[df0 - 1], index=bars.index[bars.shape[0] - df0.shape[0] :]
+    )
+    df0 = (
+        bars.close.loc[df0.index] / bars.close.loc[df0.values].values - 1
+    )  # daily returns
     df0 = df0.ewm(span=span0).std()
-    return df0.rename('daily_vol').dropna()
-
+    return df0.rename("daily_vol").dropna()
