@@ -1,5 +1,4 @@
 import gc
-import os
 from functools import wraps
 from typing import Literal, Any
 
@@ -7,219 +6,7 @@ import numpy as np
 import pandas as pd
 from numba import njit
 
-from dataclasses import dataclass, field
 from utils.general import reduce_memory_usage
-
-
-@dataclass
-class Bars:
-    time: list[float] = field(default_factory=list)
-    open: list[float] = field(default_factory=list)
-    high: list[float] = field(default_factory=list)
-    low: list[float] = field(default_factory=list)
-    close: list[float] = field(default_factory=list)
-    volume: list[float] = field(default_factory=list)
-    vwap: list[float] = field(default_factory=list)
-
-    def add_bar_params(self, transactions: pd.DataFrame) -> None:
-        self.time.append(transactions["time"].iloc[-1])
-        self.open.append(transactions["price"].iloc[0])
-        self.high.append(transactions["price"].max())
-        self.low.append(transactions["price"].min())
-        self.close.append(transactions["price"].iloc[-1])
-        self.volume.append(transactions["qty"].sum())
-        self.vwap.append(
-            (transactions["qty"] * transactions["price"]).sum()
-            / transactions["qty"].sum()
-        )
-
-    def to_df(self):
-        df = pd.DataFrame(
-            {
-                "time": self.time,
-                "open": self.open,
-                "high": self.high,
-                "low": self.low,
-                "close": self.close,
-                "volume": self.volume,
-                "vwap": self.vwap,
-            }
-        )
-        # in case there are bars with the same time (may happened with bad arguments)
-        df["price_volume"] = df["close"] * df["volume"]
-        df = (
-            df.groupby("time")
-            .agg(
-                {
-                    "open": "first",
-                    "close": "last",
-                    "high": "max",
-                    "low": "min",
-                    "volume": "sum",
-                    "price_volume": "sum",
-                }
-            )
-            .reset_index()
-        )
-        df["vwap"] = df["price_volume"] / df["volume"]
-        df.drop(columns=["price_volume"], inplace=True)
-        return df
-
-
-def create_time_bars(transaction_df, T) -> tuple[pd.DataFrame, None]:
-    # Convert epoch timestamp to datetime
-    transaction_df["dt_time"] = pd.to_datetime(transaction_df["time"], unit="ms")
-    transaction_df.set_index("dt_time", inplace=True)
-
-    # Resample the dataframe to create bars for every T minutes
-    if T[-1] == "m":
-        T = T[:-1] + "min"
-    resampled_df = transaction_df.resample(T).agg(
-        {"price": ["first", "max", "min", "last"], "qty": "sum"}
-    )
-
-    resampled_df.columns = ["open", "high", "low", "close", "volume"]
-    resampled_df.dropna(inplace=True)
-    resampled_df.reset_index(inplace=True)
-    resampled_df["time"] = resampled_df["dt_time"]
-    del resampled_df["dt_time"]
-    gc.collect()
-
-    res = reduce_memory_usage(resampled_df).set_index("time")
-    return res, None
-
-
-def create_tick_bars(
-    transaction_df: pd.DataFrame, T: float
-) -> tuple[pd.DataFrame, None]:
-    transaction_df = transaction_df.sort_values(by="time").reset_index(drop=True)
-    n_bars = len(transaction_df) // T
-    transactions = transaction_df.iloc[: n_bars * T]
-    chunks = transactions.values.reshape(n_bars, T, -1)
-    times = chunks[:, :, transaction_df.columns.get_loc("time")]
-    prices = chunks[:, :, transaction_df.columns.get_loc("price")]
-    qtys = chunks[:, :, transaction_df.columns.get_loc("qty")]
-
-    times_end = times[:, -1]
-    opens = prices[:, 0]
-    highs = prices.max(axis=1)
-    lows = prices.min(axis=1)
-    closes = prices[:, -1]
-    volumes = qtys.sum(axis=1)
-
-    tick_bars_df = pd.DataFrame(
-        {
-            "time": times_end,
-            "open": opens,
-            "high": highs,
-            "low": lows,
-            "close": closes,
-            "volume": volumes,
-        }
-    )
-
-    res = reduce_memory_usage(tick_bars_df).set_index("time")
-    return res
-
-
-def create_volume_bars(transaction_df: pd.DataFrame, T: float) -> pd.DataFrame:
-    transaction_df = transaction_df.sort_values(by="time").reset_index(drop=True)
-    transaction_df["cumulative_volume"] = transaction_df["qty"].cumsum()
-    # Identify the indices where the cumulative volume reaches the threshold T
-    volume_thresholds = np.arange(T, transaction_df["cumulative_volume"].max(), T)
-    volume_bar_indices = np.searchsorted(
-        transaction_df["cumulative_volume"].values, volume_thresholds
-    )
-
-    times = []
-    opens = []
-    highs = []
-    lows = []
-    closes = []
-    volumes = []
-    previous_index = 0
-    for index in volume_bar_indices:
-        if previous_index != index:
-            chunk = transaction_df.iloc[previous_index:index]
-        times.append(chunk["time"].iloc[-1])
-        opens.append(chunk["price"].iloc[0])
-        highs.append(chunk["price"].max())
-        lows.append(chunk["price"].min())
-        closes.append(chunk["price"].iloc[-1])
-        volumes.append(chunk["qty"].sum())
-        previous_index = index
-
-    volume_bars_df = pd.DataFrame(
-        {
-            "time": times,
-            "open": opens,
-            "high": highs,
-            "low": lows,
-            "close": closes,
-            "volume": volumes,
-        }
-    )
-
-    res = reduce_memory_usage(volume_bars_df).set_index("time")
-    return res
-
-
-def create_dollar_bars(transaction_df: pd.DataFrame, T: float) -> pd.DataFrame:
-    transaction_df = transaction_df.sort_values(by="time").reset_index(drop=True)
-    transaction_df["cumulative_dollar"] = (
-        transaction_df["price"] * transaction_df["qty"]
-    ).cumsum()
-    # Identify the indices where the cumulative volume reaches the threshold T
-    volume_thresholds = np.arange(T, transaction_df["cumulative_dollar"].max(), T)
-    volume_bar_indices = np.searchsorted(
-        transaction_df["cumulative_dollar"].values, volume_thresholds
-    )
-
-    times = []
-    opens = []
-    highs = []
-    lows = []
-    closes = []
-    volumes = []
-    previous_index = 0
-    for index in volume_bar_indices:
-        if previous_index != index:
-            chunk = transaction_df.iloc[previous_index:index]
-        times.append(chunk["time"].iloc[-1])
-        opens.append(chunk["price"].iloc[0])
-        highs.append(chunk["price"].max())
-        lows.append(chunk["price"].min())
-        closes.append(chunk["price"].iloc[-1])
-        volumes.append(chunk["qty"].sum())
-        previous_index = index
-
-    dollar_bars_df = pd.DataFrame(
-        {
-            "time": times,
-            "open": opens,
-            "high": highs,
-            "low": lows,
-            "close": closes,
-            "volume": volumes,
-        }
-    )
-
-    dollar_bars_df = (
-        dollar_bars_df.groupby("time")
-        .agg(
-            {
-                "open": "first",
-                "close": "last",
-                "high": "max",
-                "low": "min",
-                "volume": "sum",
-            }
-        )
-        .reset_index()
-    )
-
-    res = reduce_memory_usage(dollar_bars_df).set_index("time")
-    return res
 
 
 @njit
@@ -266,7 +53,9 @@ def _imbalance_dollar_bar_fast(prices: np.ndarray, qty: np.ndarray) -> np.ndarra
             res[6, res_index] = (
                 qty[prev_T_star : prev_T_star + T]
                 * prices[prev_T_star : prev_T_star + T]
-            ).sum()  # dollars
+            ).sum() / res[
+                5, res_index
+            ]  # vwap
             res_index += 1
             prev_T_star += T
 
@@ -289,47 +78,6 @@ def create_imbalance_dollar_bar(transaction_df: pd.DataFrame) -> pd.DataFrame:
     )
     res = reduce_memory_usage(res).set_index("time")
     return res
-
-
-@njit
-def generate_range_bars(
-    prices: np.ndarray, qtys: np.ndarray, timestamps: np.ndarray, T: float
-):
-    bars = []
-    high = prices[0]
-    low = prices[0]
-    open_price = prices[0]
-    volume = 0
-
-    for i in range(len(prices)):
-        price = prices[i]
-        qty = qtys[i]
-        timestamp = timestamps[i]
-        high = max(high, price)
-        low = min(low, price)
-        volume += qty
-
-        if high - low >= T:
-            close_price = price
-            bars.append([timestamp, open_price, high, low, close_price, volume])
-            open_price = price
-            high = price
-            low = price
-            volume = 0
-
-    return np.array(bars)
-
-
-def create_range_bars(df: pd.DataFrame, T: float):
-    prices = df["price"].values
-    qtys = df["qty"].values
-    timestamps = df["time"].values
-    bars_array = generate_range_bars(prices, qtys, timestamps, T)
-    bars_df = pd.DataFrame(
-        bars_array, columns=["timestamp", "open", "high", "low", "close", "volume"]
-    )
-    bars_df.set_index("timestamp", inplace=True)
-    return bars_df
 
 
 def bars_generator(func):
@@ -472,12 +220,13 @@ def create_tick_bars__rolling(
 
     return bars
 
+
 @bars_generator
 def create_volume_bars__rolling(
     transaction_df: pd.DataFrame,
     T: float,
-    generate_dollar_bars: bool = True,
-) -> tuple[pd.DataFrame, pd.DataFrame | None]:
+    generate_dollar_bars: bool = False,
+) -> pd.DataFrame:
     if generate_dollar_bars:
         cumulative_volume = (transaction_df["price"] * transaction_df["qty"]).cumsum()
     else:
@@ -486,74 +235,123 @@ def create_volume_bars__rolling(
     # Identify the indices where the cumulative volume reaches the threshold T
     volume_threshold = np.arange(T, cumulative_volume.max(), T)
     volume_bar_indices = np.searchsorted(cumulative_volume.values, volume_threshold)
-    bars = Bars()
 
     previous_index = 0
     chunk = pd.DataFrame()
-    for index in volume_bar_indices[:-1]:
+    n_bars = len(volume_bar_indices)
+    open_time = np.empty(n_bars, dtype=np.float64)
+    opens = np.empty(n_bars, dtype=np.float64)
+    highs = np.empty(n_bars, dtype=np.float64)
+    lows = np.empty(n_bars, dtype=np.float64)
+    closes = np.empty(n_bars, dtype=np.float64)
+    volumes = np.empty(n_bars, dtype=np.float64)
+    vwaps = np.empty(n_bars, dtype=np.float64)
+    for i, index in enumerate(volume_bar_indices):
         if previous_index != index:
             chunk = transaction_df.iloc[previous_index:index]
-        bars.add_bar_params(chunk)
+
+        open_time[i] = chunk["time"].iloc[-1]
+        opens[i] = chunk["price"].iloc[0]
+        highs[i] = chunk["price"].max()
+        lows[i] = chunk["price"].min()
+        closes[i] = chunk["price"].iloc[-1]
+        volumes[i] = chunk["qty"].sum()
+        vwaps[i] = (chunk["qty"] * chunk["price"]).sum() / chunk["qty"].sum()
         previous_index = index
 
-    last_bar_transactions = transaction_df.iloc[volume_bar_indices[-1] :]
-    last_bar = (last_bar_transactions["price"] * last_bar_transactions["qty"]).sum()
-    assert last_bar < T
+    dollar_bars_df = pd.DataFrame(
+        {
+            "time": open_time,
+            "open": opens,
+            "high": highs,
+            "low": lows,
+            "close": closes,
+            "volume": volumes,
+        }
+    )
 
-    volume_bars_df = bars.to_df()
-    res = reduce_memory_usage(volume_bars_df).set_index("time")
-    return res, last_bar_transactions
+    dollar_bars_df = (
+        dollar_bars_df.groupby("time")
+        .agg(
+            {
+                "open": "first",
+                "close": "last",
+                "high": "max",
+                "low": "min",
+                "volume": "sum",
+            }
+        )
+        .reset_index()
+    )
+
+    return dollar_bars_df
 
 
+@bars_generator
 def create_imbalance_dollar_bar__rolling(
     transaction_df: pd.DataFrame,
-    last_bar_transactions: pd.DataFrame | None,
-    is_last_transactions: bool = False,
-) -> tuple[pd.DataFrame, pd.DataFrame | None]:
-    if last_bar_transactions is not None:
-        transaction_df = pd.concat(
-            [last_bar_transactions, transaction_df], ignore_index=True
-        )
-    transaction_df = transaction_df.sort_values(by="time").reset_index(drop=True)
+) -> pd.DataFrame:
 
     data = _imbalance_dollar_bar_fast(
         transaction_df["price"].values, transaction_df["qty"].values
     )
 
     res = pd.DataFrame(
-        data.T, columns=["time", "open", "close", "high", "low", "volume", "dollars"]
+        data.T, columns=["time", "open", "close", "high", "low", "volume", "vwap"]
     )
-    res = reduce_memory_usage(res).set_index("time")
-    if is_last_transactions:
-        return res, None
-
-    last_bar_transactions = transaction_df.iloc[res.index[-1] :]
-    return res.iloc[:-1], last_bar_transactions
+    return res
 
 
-"""
-i have several functions with this functionality as this example below
-at the beginning and the end, i wonder how can i simply decorate the functions with it instead of repeat it every time, the arguments
- `last_bar_transactions` and `is_last_transactions` needed only for these beginning and ending of the code
-def example(
-    transaction_df: pd.DataFrame,
-    last_bar_transactions: pd.DataFrame | None,
-    is_last_transactions: bool = False,
-    <uniquely args for each function>
+@njit
+def _create_range_bars_fast(
+    prices: np.ndarray, qtys: np.ndarray, timestamps: np.ndarray, T: float
 ):
-    if last_bar_transactions is not None:
-        transaction_df = pd.concat(
-            [last_bar_transactions, transaction_df], ignore_index=True
-        )
-    transaction_df = transaction_df.sort_values(by="time").reset_index(drop=True)
-    date = <unique functionality>
-    res = pd.DataFrame(
-        data.T, columns=["time", "open", "close", "high", "low", "volume", "dollars"]
-    )
-    res = reduce_memory_usage(res).set_index("time")
-    if is_last_transactions:
-        return res, None
+    bars = []
+    high = prices[0]
+    low = prices[0]
+    open_price = prices[0]
+    volume = 0
+    vwap_sum = 0
 
-    last_bar_transactions = transaction_df.iloc[res.index[-1] :]
-    return res.iloc[:-1], last_bar_transactions
-"""
+    for i in range(len(prices)):
+        price = prices[i]
+        qty = qtys[i]
+        timestamp = timestamps[i]
+        high = max(high, price)
+        low = min(low, price)
+        volume += qty
+        vwap_sum += qty * price
+
+        if high - low >= T:
+            close_price = price
+            bars.append(
+                [
+                    timestamp,
+                    open_price,
+                    high,
+                    low,
+                    close_price,
+                    volume,
+                    vwap_sum / volume,
+                ]
+            )
+            open_price = price
+            high = price
+            low = price
+            volume = 0
+            vwap_sum = 0
+
+    return np.array(bars)
+
+
+@bars_generator
+def create_range_bars(transaction_df: pd.DataFrame, T: float):
+    prices = transaction_df["price"].values
+    qtys = transaction_df["qty"].values
+    timestamps = transaction_df["time"].values
+    bars_array = _create_range_bars_fast(prices, qtys, timestamps, T)
+    bars_df = pd.DataFrame(
+        bars_array, columns=["time", "open", "high", "low", "close", "volume", "vwap"]
+    )
+    bars_df.set_index("time", inplace=True)
+    return bars_df
