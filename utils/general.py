@@ -94,16 +94,20 @@ def load_transactions_and_generate(file_path: str, bars_generator: callable, **g
     pd.DataFrame: DataFrame with consolidated bars.
     """
     all_range_bars = []
-    last_bar = None
+    last_bar_transactions = None
 
     file_names = glob.glob(file_path)
     file_names.sort()
     for file_name in tqdm(file_names):
         df = load_df(file_name)
-        range_bars_df, last_bar = bars_generator(df, last_bar, **generator_kwargs)
-        all_range_bars.append(range_bars_df)
+        bars_df, last_bar_transactions = bars_generator(df, last_bar_transactions, **generator_kwargs)
+        all_range_bars.append(bars_df)
         del df
         gc.collect()
+
+    if last_bar_transactions is not None:
+        bars_df = bars_generator(last_bar_transactions, None, **generator_kwargs)
+        all_range_bars.append(bars_df)
 
     return pd.concat(all_range_bars).sort_index()
 
