@@ -9,77 +9,6 @@ from numba import njit
 from utils.general import reduce_memory_usage
 
 
-@njit
-def _imbalance_dollar_bar_fast(prices: np.ndarray, qty: np.ndarray) -> np.ndarray:
-    """
-    create the imbalance dollar bars as chapter 2 algorithm, the arguments names are similar to the algorithm arguments
-    timestamps not mentions in the algorithm is the timestamps corresponding to the transactions
-    Returns:
-        imbalance dollar bars
-    """
-    bucket_size = int(1e7)
-    res = np.zeros((7, bucket_size), dtype=np.float32)
-    res_index = 0
-    prev_T_star = 0
-    T = 1
-    prev_bt = 1
-    prev_p_t = 0
-    theta_T = 0
-    E_T = 1.0
-    estimation_v_plus_v_minus = 0
-    while T + prev_T_star < len(prices):
-        p_t = prices[prev_T_star + T]
-        q_t = qty[prev_T_star + T]
-        b_t = prev_bt if prev_p_t == p_t else np.sign(p_t - prev_p_t)
-        prev_p_t = p_t
-
-        theta_T += b_t * p_t * q_t
-        estimation_v_plus_v_minus = (0.9 * estimation_v_plus_v_minus) + 0.1 * (
-            b_t * p_t * q_t
-        )
-        if abs(theta_T) >= E_T * abs(estimation_v_plus_v_minus):
-            if res_index >= res.shape[1]:
-                # Resize the array if it's full
-                new_res = np.zeros((7, res.shape[1] + bucket_size), dtype=np.float32)
-                new_res[:, : res.shape[1]] = res
-                res = new_res
-
-            res[0, res_index] = prev_T_star + T  # open time
-            res[1, res_index] = prices[prev_T_star]  # open
-            res[2, res_index] = prices[prev_T_star + T]  # close
-            res[3, res_index] = prices[prev_T_star : prev_T_star + T].max()  # high
-            res[4, res_index] = prices[prev_T_star : prev_T_star + T].min()  # low
-            res[5, res_index] = qty[prev_T_star : prev_T_star + T].sum()  # volume
-            res[6, res_index] = (
-                qty[prev_T_star : prev_T_star + T]
-                * prices[prev_T_star : prev_T_star + T]
-            ).sum() / res[
-                5, res_index
-            ]  # vwap
-            res_index += 1
-            prev_T_star += T
-
-            # estimate E_T
-            E_T = 0.5 * E_T + 0.5 * T
-            T = 1
-            theta_T = 0
-        else:
-            T += 1
-    return res[:, :res_index]
-
-
-def create_imbalance_dollar_bar(transaction_df: pd.DataFrame) -> pd.DataFrame:
-    data = _imbalance_dollar_bar_fast(
-        transaction_df["price"].values, transaction_df["qty"].values
-    )
-
-    res = pd.DataFrame(
-        data.T, columns=["time", "open", "close", "high", "low", "volume", "dollars"]
-    )
-    res = reduce_memory_usage(res).set_index("time")
-    return res
-
-
 def bars_generator(func):
     @wraps(func)
     def wrapper(
@@ -87,7 +16,7 @@ def bars_generator(func):
         last_bar_transactions: pd.DataFrame | None,
         is_last_transactions: bool = False,
         *args: Any,
-        **kwargs: Any
+        **kwargs: Any,
     ):
         if last_bar_transactions is not None:
             transaction_df = pd.concat(
@@ -117,7 +46,7 @@ def bars_generator(func):
 
 
 @bars_generator
-def create_time_bars__rolling(
+def create_time_bars(
     transaction_df: pd.DataFrame,
     T: int,
     unit: Literal["min", "H", "D", "W"],
@@ -192,7 +121,7 @@ def _create_tick_bars_fast(
 
 
 @bars_generator
-def create_tick_bars__rolling(
+def create_tick_bars(
     transaction_df: pd.DataFrame,
     T: int,
 ) -> pd.DataFrame:
@@ -222,7 +151,7 @@ def create_tick_bars__rolling(
 
 
 @bars_generator
-def create_volume_bars__rolling(
+def create_volume_bars(
     transaction_df: pd.DataFrame,
     T: float,
     generate_dollar_bars: bool = False,
@@ -287,13 +216,171 @@ def create_volume_bars__rolling(
     return dollar_bars_df
 
 
+@njit
+def _imbalance_bar_fast(
+    timestamps: np.ndarray,
+    prices: np.ndarray,
+    qty: np.ndarray,
+    ticks_ewm_window: int,
+    ticks_ewm_alpha: float,
+    time_ewm_alpha: float,
+    mode: int,
+) -> np.ndarray:
+    """
+    create the imbalance dollar bars as chapter 2 algorithm, the arguments names are similar to the algorithm arguments
+    timestamps not mentions in the algorithm is the timestamps corresponding to the transactions
+    prices: np.ndarray,
+    qty: np.ndarray,
+    ewm_window: int,
+    ewm_alpha: float,
+    mode: int, 0 - ticks, 1 - volume, 2 - dollar
+    Returns:
+        imbalance <mode> bars
+    """
+    bucket_size = int(1e7)
+    res = np.zeros((7, bucket_size), dtype=np.float32)
+    ticks = np.zeros(5 * ticks_ewm_window, dtype=np.float32)
+    ticks_head = 0
+    res_index = 0
+    prev_T_star = 0
+    prev_bt = 1
+    prev_p_t = 0
+    theta_T = 0.0
+    E_T = ticks_ewm_window / 2
+    expected_imbalance = float(ticks_ewm_window)
+    weights = (1 - ticks_ewm_alpha) ** np.arange(ticks_ewm_window)[::-1]
+
+    # while T + prev_T_star < len(prices):
+    for i in range(len(timestamps)):
+        p_t = prices[i]
+        q_t = qty[i]
+        b_t = prev_bt if prev_p_t == p_t else np.sign(p_t - prev_p_t)
+
+        if mode == 0:
+            ticks[ticks_head] = b_t
+        elif mode == 1:
+            ticks[ticks_head] = b_t * q_t
+        elif mode == 2:
+            ticks[ticks_head] = b_t * q_t * p_t
+        ticks_head += 1
+        if ticks_head == len(ticks):
+            ticks[:ticks_ewm_window] = ticks[-ticks_ewm_window:]
+            ticks_head = ticks_ewm_window
+
+        prev_p_t = p_t
+        theta_T += ticks[ticks_head]
+        T = i - prev_T_star
+        if len(res) == 0 and T >= ticks_ewm_window:
+            weighted_data = weights * ticks[ticks_head - ticks_ewm_window : ticks_head]
+            expected_imbalance = (np.cumsum(weighted_data) / np.sum(weights))[-1]
+
+        if abs(theta_T) >= E_T * abs(expected_imbalance):
+            if res_index >= res.shape[1]:
+                # Resize the result array size if it's full
+                new_res = np.zeros((7, res.shape[1] + bucket_size), dtype=np.float32)
+                new_res[:, : res.shape[1]] = res
+                res = new_res
+
+            res[0, res_index] = timestamps[i]  # open time
+            res[1, res_index] = prices[prev_T_star]  # open
+            res[2, res_index] = prices[i]  # close
+            res[3, res_index] = prices[prev_T_star : i].max()  # high
+            res[4, res_index] = prices[prev_T_star : i].min()  # low
+            res[5, res_index] = qty[prev_T_star : i].sum()  # volume
+            res[6, res_index] = (
+                qty[prev_T_star : i]
+                * prices[prev_T_star : i]
+            ).sum() / res[
+                5, res_index
+            ]  # vwap
+            res_index += 1
+            prev_T_star = i
+
+            # estimate E_T
+            E_T = (1 - time_ewm_alpha) * E_T + time_ewm_alpha * T
+            weighted_data = weights * ticks[ticks_head - ticks_ewm_window : ticks_head]
+            expected_imbalance = (np.cumsum(weighted_data) / np.sum(weights))[-1]
+            theta_T = 0
+
+    res[0, res_index] = timestamps[len(timestamps)-1]  # open time
+    res[1, res_index] = prices[prev_T_star]  # open
+    res[2, res_index] = prices[len(timestamps)-1]  # close
+    res[3, res_index] = prices[prev_T_star : len(timestamps)-1].max()  # high
+    res[4, res_index] = prices[prev_T_star : len(timestamps)-1].min()  # low
+    res[5, res_index] = qty[prev_T_star : len(timestamps)-1].sum()  # volume
+    res[6, res_index] = (
+        qty[prev_T_star : len(timestamps)-1] * prices[prev_T_star : len(timestamps)-1]
+    ).sum() / res[
+        5, res_index
+    ]  # vwap
+    res_index += 1
+    return res[:, :res_index]
+
+
 @bars_generator
-def create_imbalance_dollar_bar__rolling(
+def create_imbalance_tick_bars(
     transaction_df: pd.DataFrame,
+    ticks_ewm_window: int = 100,
+    ticks_ewm_alpha: float = 0.95,
+    time_ewm_alpha: float = 0.8,
 ) -> pd.DataFrame:
 
-    data = _imbalance_dollar_bar_fast(
-        transaction_df["price"].values, transaction_df["qty"].values
+    data = _imbalance_bar_fast(
+        transaction_df["time"].values,
+        transaction_df["price"].values,
+        transaction_df["qty"].values,
+        ticks_ewm_window,
+        ticks_ewm_alpha,
+        time_ewm_alpha,
+        mode=2,
+    )
+
+    res = pd.DataFrame(
+        data.T, columns=["time", "open", "close", "high", "low", "volume", "vwap"]
+    )
+    return res
+
+
+@bars_generator
+def create_imbalance_volume_bars(
+    transaction_df: pd.DataFrame,
+    ticks_ewm_window: int = 100,
+    ticks_ewm_alpha: float = 0.95,
+    time_ewm_alpha: float = 0.8,
+) -> pd.DataFrame:
+
+    data = _imbalance_bar_fast(
+        transaction_df["time"].values,
+        transaction_df["price"].values,
+        transaction_df["qty"].values,
+        ticks_ewm_window,
+        ticks_ewm_alpha,
+        time_ewm_alpha,
+        mode=0,
+    )
+
+    res = pd.DataFrame(
+        data.T, columns=["time", "open", "close", "high", "low", "volume", "vwap"]
+    )
+    return res
+
+
+@bars_generator
+def create_imbalance_dollar_bars(
+    transaction_df: pd.DataFrame,
+    ticks_ewm_window: int = 100,
+    ticks_ewm_alpha: float = 0.95,
+    time_ewm_alpha: float = 0.8,
+) -> pd.DataFrame:
+
+    data = _imbalance_bar_fast(
+        transaction_df["time"].values,
+        transaction_df["price"].values,
+        transaction_df["qty"].values,
+        ticks_ewm_window,
+        ticks_ewm_alpha,
+        time_ewm_alpha,
+        mode=2,
     )
 
     res = pd.DataFrame(
@@ -353,5 +440,4 @@ def create_range_bars(transaction_df: pd.DataFrame, T: float):
     bars_df = pd.DataFrame(
         bars_array, columns=["time", "open", "high", "low", "close", "volume", "vwap"]
     )
-    bars_df.set_index("time", inplace=True)
     return bars_df

@@ -125,7 +125,7 @@ def load_transactions_and_generate(
     all_range_bars = []
     last_bar_transactions = None
 
-    if type(file_path) == str:
+    if isinstance(file_path, str):
         file_names = find_files_with_regex(file_path)
     else:
         file_names = file_path
@@ -149,6 +149,8 @@ def load_transactions_and_generate(
         )
         all_range_bars.append(bars_df)
 
+    if len(all_range_bars) == 1:
+        return all_range_bars[0]
     return pd.concat(all_range_bars).sort_index()
 
 
