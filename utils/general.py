@@ -38,8 +38,6 @@ def load_df(file_path: str) -> pd.DataFrame:
 
 
 def reduce_memory_usage(df: pd.DataFrame) -> pd.DataFrame:
-    start_mem = df.memory_usage().sum() / 1024**2
-
     for col in df.columns:
         col_type = df[col].dtype
 
@@ -122,7 +120,7 @@ def load_transactions_and_generate(
     Returns:
     pd.DataFrame: DataFrame with consolidated bars.
     """
-    all_range_bars = []
+    all_bars = []
     last_bar_transactions = None
 
     if isinstance(file_path, str):
@@ -139,7 +137,7 @@ def load_transactions_and_generate(
         bars_df, last_bar_transactions = bars_generator(
             df, last_bar_transactions, **generator_kwargs
         )
-        all_range_bars.append(bars_df)
+        all_bars.append(bars_df)
         del df
         gc.collect()
 
@@ -147,11 +145,11 @@ def load_transactions_and_generate(
         bars_df, _ = bars_generator(
             last_bar_transactions, None, is_last_transactions=True, **generator_kwargs
         )
-        all_range_bars.append(bars_df)
+        all_bars.append(bars_df)
 
-    if len(all_range_bars) == 1:
-        return all_range_bars[0]
-    return pd.concat(all_range_bars).sort_index()
+    if len(all_bars) == 1:
+        return all_bars[0]
+    return pd.concat(all_bars).sort_index()
 
 
 def returns(prices):
