@@ -134,7 +134,7 @@ def load_transactions_and_generate(
         _tqdm = lambda x: x
     for file_name in _tqdm(file_names):
         df = load_df(file_name)
-        bars_df, last_bar_transactions = bars_generator(
+        bars_df, last_bar_transactions, _ = bars_generator(
             df, last_bar_transactions, **generator_kwargs
         )
         all_bars.append(bars_df)

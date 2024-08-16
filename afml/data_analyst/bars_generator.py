@@ -25,7 +25,7 @@ def bars_generator(func):
         if not transaction_df["time"].is_monotonic_increasing:
             # sort if It's not already sorted
             transaction_df = transaction_df.sort_values(by="time")
-        transaction_df.reset_index(drop=True)
+        transaction_df.reset_index(drop=True, inplace=True)
 
         result, state = func(transaction_df, *args, **kwargs)
 
@@ -72,14 +72,13 @@ def create_time_bars(
     return resampled_df, {}
 
 
-@njit(parallel=True)
+# @njit(parallel=True)
 def _create_bars_by_index(
     time_values: np.ndarray,
     price_values: np.ndarray,
     qty_values: np.ndarray,
     indices: np.ndarray,
 ):
-    previous_index = 0
     n_bars = len(indices)
     open_time = np.empty(n_bars, dtype=np.float64)
     opens = np.empty(n_bars, dtype=np.float64)
@@ -88,19 +87,17 @@ def _create_bars_by_index(
     closes = np.empty(n_bars, dtype=np.float64)
     volumes = np.empty(n_bars, dtype=np.float64)
     vwaps = np.empty(n_bars, dtype=np.float64)
-    for i in prange(len(indices)):
+    for i in prange(len(indices) - 1):
         index = indices[i]
-        if i > 0:
-            previous_index = indices[i - 1] + 1
-        open_time[i] = time_values[previous_index]
-        opens[i] = price_values[previous_index]
-        highs[i] = price_values[previous_index : index + 1].max()
-        lows[i] = price_values[previous_index : index + 1].min()
-        closes[i] = price_values[index]
-        volumes[i] = qty_values[previous_index : index + 1].sum()
+        next_index = indices[i + 1]
+        open_time[i] = time_values[index]
+        opens[i] = price_values[index]
+        highs[i] = price_values[index:next_index].max()
+        lows[i] = price_values[index:next_index].min()
+        closes[i] = price_values[next_index - 1]
+        volumes[i] = qty_values[index:next_index].sum()
         vwaps[i] = (
-            qty_values[previous_index : index + 1]
-            * price_values[previous_index : index + 1]
+            qty_values[index:next_index] * price_values[index:next_index]
         ).sum() / volumes[i]
 
     return open_time, opens, highs, lows, closes, volumes, vwaps
@@ -114,6 +111,7 @@ def create_tick_bars(
 
     # Calculate bars using Numba-accelerated function
     indices = np.arange(T, len(transaction_df), T) - 1
+    indices = np.insert(indices, 0, 0)
     indices = np.append(indices, len(transaction_df))
     open_time, opens, highs, lows, closes, volumes, vwaps = _create_bars_by_index(
         transaction_df["time"].values,
@@ -145,14 +143,15 @@ def create_volume_bars(
     generate_dollar_bars: bool = False,
 ) -> tuple[pd.DataFrame, dict]:
     if generate_dollar_bars:
-        cumulative_volume = (transaction_df["price"] * transaction_df["qty"]).cumsum()
+        cumulative_volume = (transaction_df["quote_qty"]).cumsum()
     else:
         cumulative_volume = transaction_df["qty"].cumsum()
 
     # Identify the indices where the cumulative volume reaches the threshold T
     volume_threshold = np.arange(T, cumulative_volume.max(), T)
     volume_bar_indices = np.searchsorted(cumulative_volume.values, volume_threshold)
-    volume_bar_indices = np.append(volume_bar_indices, len(cumulative_volume))
+    volume_bar_indices = np.insert(volume_bar_indices, 0, 0)
+    volume_bar_indices = np.append(volume_bar_indices, len(transaction_df))
 
     _, unique_indices = np.unique(volume_bar_indices, return_index=True)
     volume_bar_indices = volume_bar_indices[unique_indices]
@@ -327,7 +326,6 @@ def create_imbalance_tick_bars(
         ticks_ewm_alpha,
         time_ewm_alpha,
         mode=0,
-
         # state args
         init_expected_balance_flag=init_expected_balance_flag,
         E_T=E_T,
@@ -347,9 +345,13 @@ def create_imbalance_volume_bars(
     init_expected_ticks: int = 100,
     ticks_ewm_alpha: float = 0.95,
     time_ewm_alpha: float = 0.8,
+    init_expected_balance_flag: bool = True,
+    E_T: float = 0.0,
+    expected_imbalance=0,
+    theta_T=0,
 ) -> tuple[pd.DataFrame, dict]:
 
-    data = _imbalance_bar_fast(
+    data, state = _imbalance_bar_fast(
         transaction_df["time"].values,
         transaction_df["price"].values,
         transaction_df["qty"].values,
@@ -357,12 +359,17 @@ def create_imbalance_volume_bars(
         ticks_ewm_alpha,
         time_ewm_alpha,
         mode=1,
+        # state args
+        init_expected_balance_flag=init_expected_balance_flag,
+        E_T=E_T,
+        expected_imbalance=expected_imbalance,
+        theta_T=theta_T,
     )
 
     res = pd.DataFrame(
         data.T, columns=["time", "open", "close", "high", "low", "volume", "vwap"]
     )
-    return res, {}
+    return res, state
 
 
 @bars_generator
@@ -371,9 +378,13 @@ def create_imbalance_dollar_bars(
     init_expected_ticks: int = 100,
     ticks_ewm_alpha: float = 0.95,
     time_ewm_alpha: float = 0.8,
+    init_expected_balance_flag: bool = True,
+    E_T: float = 0.0,
+    expected_imbalance=0,
+    theta_T=0,
 ) -> tuple[pd.DataFrame, dict]:
 
-    data = _imbalance_bar_fast(
+    data, state = _imbalance_bar_fast(
         transaction_df["time"].values,
         transaction_df["price"].values,
         transaction_df["qty"].values,
@@ -381,12 +392,17 @@ def create_imbalance_dollar_bars(
         ticks_ewm_alpha,
         time_ewm_alpha,
         mode=2,
+        # state args
+        init_expected_balance_flag=init_expected_balance_flag,
+        E_T=E_T,
+        expected_imbalance=expected_imbalance,
+        theta_T=theta_T,
     )
 
     res = pd.DataFrame(
         data.T, columns=["time", "open", "close", "high", "low", "volume", "vwap"]
     )
-    return res, {}
+    return res, state
 
 
 @njit
@@ -399,7 +415,11 @@ def _run_bar_fast(
     time_ewm_alpha: float,
     pbt_ewm_alpha: float,
     mode: int,
-) -> np.ndarray:
+    E_T: float,
+    E_buy_volumes: float,
+    E_sell_volumes: float,
+    P_bt_buy: float,
+) -> tuple[np.ndarray, dict]:
     """
     create the run bars as chapter 2 algorithm, the arguments names are similar to the algorithm arguments
     timestamps: np.ndarray,
@@ -417,13 +437,11 @@ def _run_bar_fast(
     prev_T_star = 0
     prev_bt = 1
     prev_p_t = 0
-    E_T = init_expected_ticks
     buy_volume = 0.0
     count_buy_sequence = 0.0
     total_volume = 0.0
-    P_bt_buy = 0.5
-    E_buy_volumes = 1
-    E_sell_volumes = 1
+    if E_T == 0:
+        E_T = init_expected_ticks
     for i in range(len(timestamps)):
         p_t = prices[i]
         q_t = qty[i]
@@ -476,7 +494,12 @@ def _run_bar_fast(
     res[:, res_index] = _create_bar(
         timestamps, prices, qty, prev_T_star, len(timestamps) - 1
     )
-    return res[:, : res_index + 1]
+    return res[:, : res_index + 1], {
+        "E_T": E_T,
+        "E_buy_volumes": E_buy_volumes,
+        "E_sell_volumes": E_sell_volumes,
+        "P_bt_buy": P_bt_buy,
+    }
 
 
 @bars_generator
@@ -486,9 +509,13 @@ def create_run_ticks_bars(
     ticks_ewm_alpha: float = 0.95,
     time_ewm_alpha: float = 0.8,
     pbt_ewm_alpha: float = 0.8,
+    E_T: float = 0,
+    E_buy_volumes: float = 1,
+    E_sell_volumes: float = 1,
+    P_bt_buy: float = 0.5,
 ) -> tuple[pd.DataFrame, dict]:
 
-    data = _run_bar_fast(
+    data, state = _run_bar_fast(
         transaction_df["time"].values,
         transaction_df["price"].values,
         transaction_df["qty"].values,
@@ -497,12 +524,16 @@ def create_run_ticks_bars(
         time_ewm_alpha,
         pbt_ewm_alpha,
         mode=0,
+        E_T=E_T,
+        E_buy_volumes=E_buy_volumes,
+        E_sell_volumes=E_sell_volumes,
+        P_bt_buy=P_bt_buy,
     )
 
     res = pd.DataFrame(
         data.T, columns=["time", "open", "close", "high", "low", "volume", "vwap"]
     )
-    return res, {}
+    return res, state
 
 
 @njit
