@@ -307,7 +307,7 @@ def _imbalance_bar_fast(
 
 
 @bars_generator
-def create_imbalance_tick_bars(
+def create_tick_imbalance_bars(
     transaction_df: pd.DataFrame,
     init_expected_ticks: int = 100,
     ticks_ewm_alpha: float = 0.95,
@@ -340,7 +340,7 @@ def create_imbalance_tick_bars(
 
 
 @bars_generator
-def create_imbalance_volume_bars(
+def create_volume_imbalance_bars(
     transaction_df: pd.DataFrame,
     init_expected_ticks: int = 100,
     ticks_ewm_alpha: float = 0.95,
@@ -373,7 +373,7 @@ def create_imbalance_volume_bars(
 
 
 @bars_generator
-def create_imbalance_dollar_bars(
+def create_dollar_imbalance_bars(
     transaction_df: pd.DataFrame,
     init_expected_ticks: int = 100,
     ticks_ewm_alpha: float = 0.95,
@@ -406,7 +406,7 @@ def create_imbalance_dollar_bars(
 
 
 @njit
-def _run_bar_fast(
+def _runs_bar_fast(
     timestamps: np.ndarray,
     prices: np.ndarray,
     qty: np.ndarray,
@@ -416,9 +416,9 @@ def _run_bar_fast(
     pbt_ewm_alpha: float,
     mode: int,
     E_T: float,
+    P_bt_buy: float,
     E_buy_volumes: float,
     E_sell_volumes: float,
-    P_bt_buy: float,
 ) -> tuple[np.ndarray, dict]:
     """
     create the run bars as chapter 2 algorithm, the arguments names are similar to the algorithm arguments
@@ -503,19 +503,19 @@ def _run_bar_fast(
 
 
 @bars_generator
-def create_run_ticks_bars(
+def create_tick_runs_bars(
     transaction_df: pd.DataFrame,
     init_expected_ticks: int = 10000,
     ticks_ewm_alpha: float = 0.95,
     time_ewm_alpha: float = 0.8,
     pbt_ewm_alpha: float = 0.8,
     E_T: float = 0,
+    P_bt_buy: float = 0.5,
     E_buy_volumes: float = 1,
     E_sell_volumes: float = 1,
-    P_bt_buy: float = 0.5,
 ) -> tuple[pd.DataFrame, dict]:
 
-    data, state = _run_bar_fast(
+    data, state = _runs_bar_fast(
         transaction_df["time"].values,
         transaction_df["price"].values,
         transaction_df["qty"].values,
@@ -525,9 +525,77 @@ def create_run_ticks_bars(
         pbt_ewm_alpha,
         mode=0,
         E_T=E_T,
+        P_bt_buy=P_bt_buy,
         E_buy_volumes=E_buy_volumes,
         E_sell_volumes=E_sell_volumes,
+    )
+
+    res = pd.DataFrame(
+        data.T, columns=["time", "open", "close", "high", "low", "volume", "vwap"]
+    )
+    return res, state
+
+
+@bars_generator
+def create_volume_runs_bars(
+    transaction_df: pd.DataFrame,
+    init_expected_ticks: int = 10000,
+    ticks_ewm_alpha: float = 0.95,
+    time_ewm_alpha: float = 0.8,
+    pbt_ewm_alpha: float = 0.8,
+    E_T: float = 0,
+    P_bt_buy: float = 0.5,
+    E_buy_volumes: float = 1,
+    E_sell_volumes: float = 1,
+) -> tuple[pd.DataFrame, dict]:
+
+    data, state = _runs_bar_fast(
+        transaction_df["time"].values,
+        transaction_df["price"].values,
+        transaction_df["qty"].values,
+        init_expected_ticks,
+        ticks_ewm_alpha,
+        time_ewm_alpha,
+        pbt_ewm_alpha,
+        mode=1,
+        E_T=E_T,
         P_bt_buy=P_bt_buy,
+        E_buy_volumes=E_buy_volumes,
+        E_sell_volumes=E_sell_volumes,
+    )
+
+    res = pd.DataFrame(
+        data.T, columns=["time", "open", "close", "high", "low", "volume", "vwap"]
+    )
+    return res, state
+
+
+@bars_generator
+def create_dollar_runs_bars(
+    transaction_df: pd.DataFrame,
+    init_expected_ticks: int = 10000,
+    ticks_ewm_alpha: float = 0.95,
+    time_ewm_alpha: float = 0.8,
+    pbt_ewm_alpha: float = 0.8,
+    E_T: float = 0,
+    P_bt_buy: float = 0.5,
+    E_buy_volumes: float = 1,
+    E_sell_volumes: float = 1,
+) -> tuple[pd.DataFrame, dict]:
+
+    data, state = _runs_bar_fast(
+        transaction_df["time"].values,
+        transaction_df["price"].values,
+        transaction_df["qty"].values,
+        init_expected_ticks,
+        ticks_ewm_alpha,
+        time_ewm_alpha,
+        pbt_ewm_alpha,
+        mode=2,
+        E_T=E_T,
+        P_bt_buy=P_bt_buy,
+        E_buy_volumes=E_buy_volumes,
+        E_sell_volumes=E_sell_volumes,
     )
 
     res = pd.DataFrame(

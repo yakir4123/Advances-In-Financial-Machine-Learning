@@ -119,7 +119,7 @@ def dollar_bars_configurations():
 def imbalance_ticks_bars_configurations():
     return [
         {
-            "generator": bars_generator.create_imbalance_tick_bars,
+            "generator": bars_generator.create_tick_imbalance_bars,
             "generator-kwargs": {"ticks_ewm_alpha": 0.9},
             "label": "imbalance_ticks",
         },
