@@ -1,0 +1,32 @@
+name: Lint
+
+on:
+  pull_request:
+    branches:
+      - master
+
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout branch
+        uses: actions/checkout@v3
+        with:
+          fetch-depth: 0
+
+      - name: Get changed files
+        id: changed-files
+        uses: tj-actions/changed-files@v35
+        with:
+          files: |
+            **/*.py
+
+      - name: Setup Python
+        uses: actions/setup-python@v3
+        if: steps.changed-files.outputs.any_changed == 'true'
+
+      - name: Install Black and run
+        if: steps.changed-files.outputs.any_changed == 'true'
+        run: |
+          pip install black && black --check --diff ${{ steps.changed-files.outputs.all_changed_files }}

@@ -29,11 +29,11 @@ def get_t_events(timestamps: np.ndarray, yt: np.ndarray, h: float) -> np.ndarray
 
 @njit
 def get_t_events_dynamic_h(
-        timestamps: np.ndarray,
-        yt: np.ndarray,
-        h_timestamps: np.ndarray,
-        h_values: np.ndarray,
-        h_default: float,
+    timestamps: np.ndarray,
+    yt: np.ndarray,
+    h_timestamps: np.ndarray,
+    h_values: np.ndarray,
+    h_default: float,
 ) -> np.ndarray:
     """
     Same as get_t_events but also change h as a function of time,

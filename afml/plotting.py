@@ -23,10 +23,17 @@ def plot(bars: pd.DataFrame, lines: pd.DataFrame, markers: list) -> JupyterChart
     return chart
 
 
-def plot_autocorr(title: str, data: np.ndarray, ax, lags=1):
-    sm.graphics.tsa.plot_acf(data, lags=lags, ax=ax,
-                             alpha=0.05, unbiased=True, fft=True,
-                             zero=False, auto_ylims=True,
-                             title=title)
+def plot_autocorr(title: str, data: np.ndarray, ax: plt.Axes, lags: int = 1) -> None:
+    sm.graphics.tsa.plot_acf(
+        data,
+        lags=lags,
+        ax=ax,
+        alpha=0.05,
+        unbiased=True,
+        fft=True,
+        zero=False,
+        auto_ylims=True,
+        title=title,
+    )
 
     plt.tight_layout()

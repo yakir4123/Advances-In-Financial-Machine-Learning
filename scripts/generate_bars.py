@@ -1,25 +1,25 @@
 import gc
+from typing import Any
+
 import pandas as pd
+from tqdm import tqdm
 
 from afml import general
 from afml.data_analyst import bars_generator
 
-from typing import Any
-from tqdm import tqdm
-
 
 def load_transactions_and_generate(
     file_path: str | list[str], generator_items: list[dict[str, Any]]
-):
+) -> list[pd.DataFrame]:
     _slice_size = int(1e9)
     if isinstance(file_path, str):
         file_names = general.find_files_with_regex(file_path)
     else:
         file_names = file_path
     file_names.sort()
-    all_bars = [[] for _ in range(len(generator_items))]
+    all_bars: list[list] = [[] for _ in range(len(generator_items))]
     last_bar_transactions = [None for _ in range(len(generator_items))]
-    states = [{} for _ in range(len(generator_items))]
+    states: list[dict] = [{} for _ in range(len(generator_items))]
     with tqdm(total=len(file_names) * len(generator_items)) as pbar:
         for file_name in file_names:
             transactions = general.load_df(file_name)
@@ -63,7 +63,7 @@ def load_transactions_and_generate(
     return res
 
 
-def time_bars_configurations():
+def time_bars_configurations() -> list[dict]:
     kwargs = [
         {"T": 1, "unit": "D"},
         {"T": 4, "unit": "h"},
@@ -80,7 +80,7 @@ def time_bars_configurations():
     ]
 
 
-def tick_bars_configurations():
+def tick_bars_configurations() -> list[dict]:
     kwargs = [{"T": 10**i} for i in range(4, 8)]
     return [
         {
@@ -92,7 +92,7 @@ def tick_bars_configurations():
     ]
 
 
-def volume_bars_configurations():
+def volume_bars_configurations() -> list[dict]:
     kwargs = [{"T": 10**i} for i in range(3, 6)]
     return [
         {
@@ -104,7 +104,7 @@ def volume_bars_configurations():
     ]
 
 
-def dollar_bars_configurations():
+def dollar_bars_configurations() -> list[dict]:
     kwargs = [{"T": 10**i, "generate_dollar_bars": True} for i in range(5, 9)]
     return [
         {
@@ -116,7 +116,7 @@ def dollar_bars_configurations():
     ]
 
 
-def imbalance_ticks_bars_configurations():
+def imbalance_ticks_bars_configurations() -> list[dict]:
     return [
         {
             "generator": bars_generator.create_tick_imbalance_bars,
@@ -126,7 +126,7 @@ def imbalance_ticks_bars_configurations():
     ]
 
 
-def range_bars_configurations():
+def range_bars_configurations() -> list[dict]:
     return [
         {
             "generator": bars_generator.create_range_bars,

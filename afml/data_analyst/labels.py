@@ -25,14 +25,19 @@ def get_vertical_next_day(bars: pd.DataFrame, t0: pd.Series, ms: int) -> pd.Seri
     return pd.Series(bars.index[t1].values, index=t0[: t1.shape[0]])
 
 
-def apply_tp_sl(close: pd.Series, events, target, tp_scale, sl_scale, molecule):
+def apply_tp_sl(
+    close: pd.Series,
+    events: pd.DataFrame,
+    target: pd.Series,
+    tp_scale: float,
+    sl_scale: float,
+) -> pd.DataFrame:
     """
     Snippet 3.2
     The output from this function is a pandas dataframe containing the timestamps
      (if any) at which each barrier was touched
     """
-    events_ = events.loc[molecule]
-    out = events_[["t1"]].copy(deep=True)
+    out = events[["t1"]].copy(deep=True)
     if tp_scale > 0:
         tp = tp_scale * target
     else:
@@ -41,9 +46,9 @@ def apply_tp_sl(close: pd.Series, events, target, tp_scale, sl_scale, molecule):
         sl = -sl_scale * target
     else:
         sl = pd.Series(index=events.index)  # NaNs
-    for loc, t1 in events_["t1"].fillna(close.index[-1]).items():
+    for loc, t1 in events["t1"].fillna(close.index[-1]).items():
         df0 = close.loc[loc:t1]  # path prices
-        df0 = (df0 / close[loc] - 1) * events_.at[loc, "side"]  # path returns
+        df0 = (df0 / close[loc] - 1) * events.at[loc, "side"]  # path returns
         out.loc[loc, "sl"] = df0[df0 < sl[loc]].index.min()  # earliest stop loss.
         out.loc[loc, "tp"] = df0[df0 > tp[loc]].index.min()  # earliest profit taking.
     return out
@@ -99,7 +104,7 @@ def get_events_triple_barrier(
     else:
         side_ = side.loc[target.index.intersection(side.index)]
     events = pd.concat({"t1": t1, "side": side_}, axis=1).dropna()
-    df0 = apply_tp_sl(close, events, target, tp_scale, sl_scale, events.index)
+    df0 = apply_tp_sl(close, events, target, tp_scale, sl_scale)
     events["t1"] = df0.dropna(how="all").min(axis=1)
     events.rename(columns={"t1": "touch"}, inplace=True)
     if side is None:
@@ -107,7 +112,9 @@ def get_events_triple_barrier(
     return events
 
 
-def get_bins(events: pd.DataFrame, close: pd.Series, t1: pd.Series | None = None) -> pd.DataFrame:
+def get_bins(
+    events: pd.DataFrame, close: pd.Series, t1: pd.Series | None = None
+) -> pd.DataFrame:
     """
     SNIPPET 3.5
     Labeling for side and size

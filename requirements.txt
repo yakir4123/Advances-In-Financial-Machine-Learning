@@ -9,3 +9,4 @@ lightweight-charts
 dask[dataframe]
 tqdm
 humanize
+pytest

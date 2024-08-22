@@ -1,6 +1,6 @@
 import gc
 from functools import wraps
-from typing import Literal, Any
+from typing import Any, Callable, Literal
 
 import numpy as np
 import pandas as pd
@@ -9,15 +9,15 @@ from numba import njit, prange
 from afml.general import reduce_memory_usage
 
 
-def bars_generator(func):
+def bars_generator(func: Callable) -> Callable:
     @wraps(func)
     def wrapper(
         transaction_df: pd.DataFrame,
-        last_bar_transactions: pd.DataFrame | None,
+        last_bar_transactions: pd.DataFrame | None = None,
         is_last_transactions: bool = False,
         *args: Any,
         **kwargs: Any,
-    ):
+    ) -> tuple[pd.DataFrame, pd.DataFrame, dict]:
         if last_bar_transactions is not None:
             transaction_df = pd.concat(
                 [last_bar_transactions, transaction_df], ignore_index=True
@@ -30,8 +30,6 @@ def bars_generator(func):
         result, state = func(transaction_df, *args, **kwargs)
 
         result = reduce_memory_usage(result).set_index("time")
-        if is_last_transactions:
-            return result, None
 
         # faster way than transaction_df[transaction_df['time'] >= result.index[-1]][0]
         idx = np.searchsorted(
@@ -40,6 +38,8 @@ def bars_generator(func):
             side="left",
         )
         last_bar_transactions = transaction_df.iloc[idx:]
+        if is_last_transactions:
+            return result, last_bar_transactions, state
         return result.iloc[:-1], last_bar_transactions, state
 
     return wrapper
@@ -48,6 +48,7 @@ def bars_generator(func):
 @bars_generator
 def create_time_bars(
     transaction_df: pd.DataFrame,
+    *,
     T: int,
     unit: Literal["min", "H", "D", "W"],
 ) -> tuple[pd.DataFrame, dict]:
@@ -72,13 +73,15 @@ def create_time_bars(
     return resampled_df, {}
 
 
-# @njit(parallel=True)
+@njit(parallel=True)
 def _create_bars_by_index(
     time_values: np.ndarray,
     price_values: np.ndarray,
     qty_values: np.ndarray,
     indices: np.ndarray,
-):
+) -> tuple[
+    np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray
+]:
     n_bars = len(indices)
     open_time = np.empty(n_bars, dtype=np.float64)
     opens = np.empty(n_bars, dtype=np.float64)
@@ -106,6 +109,7 @@ def _create_bars_by_index(
 @bars_generator
 def create_tick_bars(
     transaction_df: pd.DataFrame,
+    *,
     T: int,
 ) -> tuple[pd.DataFrame, dict]:
 
@@ -139,6 +143,7 @@ def create_tick_bars(
 @bars_generator
 def create_volume_bars(
     transaction_df: pd.DataFrame,
+    *,
     T: float,
     generate_dollar_bars: bool = False,
 ) -> tuple[pd.DataFrame, dict]:
@@ -309,13 +314,14 @@ def _imbalance_bar_fast(
 @bars_generator
 def create_tick_imbalance_bars(
     transaction_df: pd.DataFrame,
+    *,
     init_expected_ticks: int = 100,
     ticks_ewm_alpha: float = 0.95,
     time_ewm_alpha: float = 0.8,
     init_expected_balance_flag: bool = True,
     E_T: float = 0.0,
-    expected_imbalance=0,
-    theta_T=0,
+    expected_imbalance: float = 0,
+    theta_T: float = 0,
 ) -> tuple[pd.DataFrame, dict]:
 
     data, state = _imbalance_bar_fast(
@@ -342,13 +348,14 @@ def create_tick_imbalance_bars(
 @bars_generator
 def create_volume_imbalance_bars(
     transaction_df: pd.DataFrame,
+    *,
     init_expected_ticks: int = 100,
     ticks_ewm_alpha: float = 0.95,
     time_ewm_alpha: float = 0.8,
     init_expected_balance_flag: bool = True,
     E_T: float = 0.0,
-    expected_imbalance=0,
-    theta_T=0,
+    expected_imbalance: float = 0,
+    theta_T: float = 0,
 ) -> tuple[pd.DataFrame, dict]:
 
     data, state = _imbalance_bar_fast(
@@ -375,13 +382,14 @@ def create_volume_imbalance_bars(
 @bars_generator
 def create_dollar_imbalance_bars(
     transaction_df: pd.DataFrame,
+    *,
     init_expected_ticks: int = 100,
     ticks_ewm_alpha: float = 0.95,
     time_ewm_alpha: float = 0.8,
     init_expected_balance_flag: bool = True,
     E_T: float = 0.0,
-    expected_imbalance=0,
-    theta_T=0,
+    expected_imbalance: float = 0,
+    theta_T: float = 0,
 ) -> tuple[pd.DataFrame, dict]:
 
     data, state = _imbalance_bar_fast(
@@ -505,6 +513,7 @@ def _runs_bar_fast(
 @bars_generator
 def create_tick_runs_bars(
     transaction_df: pd.DataFrame,
+    *,
     init_expected_ticks: int = 10000,
     ticks_ewm_alpha: float = 0.95,
     time_ewm_alpha: float = 0.8,
@@ -539,6 +548,7 @@ def create_tick_runs_bars(
 @bars_generator
 def create_volume_runs_bars(
     transaction_df: pd.DataFrame,
+    *,
     init_expected_ticks: int = 10000,
     ticks_ewm_alpha: float = 0.95,
     time_ewm_alpha: float = 0.8,
@@ -573,6 +583,7 @@ def create_volume_runs_bars(
 @bars_generator
 def create_dollar_runs_bars(
     transaction_df: pd.DataFrame,
+    *,
     init_expected_ticks: int = 10000,
     ticks_ewm_alpha: float = 0.95,
     time_ewm_alpha: float = 0.8,
@@ -607,7 +618,7 @@ def create_dollar_runs_bars(
 @njit
 def _create_range_bars_fast(
     prices: np.ndarray, qtys: np.ndarray, timestamps: np.ndarray, T: float
-):
+) -> np.ndarray:
     bars = []
     high = prices[0]
     low = prices[0]
@@ -649,6 +660,7 @@ def _create_range_bars_fast(
 @bars_generator
 def create_range_bars(
     transaction_df: pd.DataFrame,
+    *,
     T: float,
 ) -> tuple[pd.DataFrame, dict]:
     prices = transaction_df["price"].values

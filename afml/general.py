@@ -1,12 +1,11 @@
 import gc
 import os
-import glob
 import re
+from typing import Any, Callable
 
 import dask.dataframe as dd
 import numpy as np
 import pandas as pd
-from numba import njit
 from tqdm import tqdm
 
 
@@ -81,7 +80,7 @@ def reduce_memory_usage(df: pd.DataFrame) -> pd.DataFrame:
     return df
 
 
-def find_files_with_regex(path: str, recursive=True):
+def find_files_with_regex(path: str, recursive: bool = True) -> list[str]:
     """
     Finds all files in the given directory that match the provided regex pattern.
 
@@ -93,7 +92,6 @@ def find_files_with_regex(path: str, recursive=True):
     directory, pattern = path.rsplit("/", 1)
     matching_files = []
     regex = re.compile(pattern)
-
     for root, _, files in os.walk(directory):
         for file in files:
             if regex.match(file):
@@ -106,10 +104,10 @@ def find_files_with_regex(path: str, recursive=True):
 
 def load_transactions_and_generate(
     file_path: str | list[str],
-    bars_generator: callable,
+    bars_generator: Callable,
     progress_bar: bool = True,
-    **generator_kwargs
-):
+    **generator_kwargs: Any,
+) -> pd.DataFrame:
     """
     Process CSV transactions files and generate for each file and do it periodically to save memory.
 
@@ -152,11 +150,11 @@ def load_transactions_and_generate(
     return pd.concat(all_bars).sort_index()
 
 
-def returns(prices):
+def returns(prices: pd.Series) -> pd.Series:
     return prices.pct_change().dropna()
 
 
-def get_daily_vol(bars: pd.DataFrame, span0: int = 100):
+def get_daily_vol(bars: pd.DataFrame, span0: int = 100) -> pd.Series:
     # daily vol, reindexed to close
     ms_a_day = 24 * 60 * 60 * 1000
 

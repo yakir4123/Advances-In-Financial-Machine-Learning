@@ -1,0 +1,36 @@
+name: MyPy
+
+on:
+  pull_request:
+    branches:
+      - master
+
+jobs:
+  mypy_check:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout branch
+        uses: actions/checkout@v3
+        with:
+          fetch-depth: 0
+
+      - name: Get changed files
+        id: changed-files
+        uses: tj-actions/changed-files@v35
+        with:
+          files: |
+            **/*.py
+
+      - name: Setup Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: "3.11"
+        if: steps.changed-files.outputs.any_changed == 'true'
+
+      - name: Install Mypy
+        if: steps.changed-files.outputs.any_changed == 'true'
+        run: python3.11 -m pip install "mypy~=1.7.1"
+
+      - name: Run Mypy
+        if: steps.changed-files.outputs.any_changed == 'true'
+        run: python3.11 -m mypy --install-types --non-interactive --disallow-untyped-defs --python-version "3.11" --ignore-missing ${{ steps.changed-files.outputs.all_changed_files }}
