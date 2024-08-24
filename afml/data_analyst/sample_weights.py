@@ -1,6 +1,9 @@
+from typing import Callable
+
 import numpy as np
 import pandas as pd
 from numba import njit, prange
+from sklearn.utils import check_random_state
 
 
 @njit
@@ -132,7 +135,7 @@ def _seq_bootstrap_fast(ind_m: np.ndarray, s_length: int) -> np.ndarray:
     return phi
 
 
-def seq_bootstrap(ind_m: pd.DataFrame):
+def bagging_seq_bootstrap(ind_m: pd.DataFrame) -> Callable[[int], np.ndarray]:
     """
     Snippet 4.5 gives us the index of the features sampled by sequential bootstrap. The
     inputs are the indicator matrix (indM) and an optional sample length (sLength), with
@@ -141,6 +144,18 @@ def seq_bootstrap(ind_m: pd.DataFrame):
 
     def bootstrap(n_samples: int):
         return _seq_bootstrap_fast(ind_m.values, n_samples)
+
+    return bootstrap
+
+
+def rf_seq_bootstrap(ind_m: pd.DataFrame) -> Callable[[None | int | np.random.RandomState, int, int], np.ndarray]:
+    """
+    Snippet 4.5 gives us the index of the features sampled by sequential bootstrap. The
+    inputs are the indicator matrix (indM)
+    """
+
+    def bootstrap(random_state: None | int | np.random.RandomState, n_samples: int, n_samples_bootstrap: int):
+        return _seq_bootstrap_fast(ind_m.values, n_samples_bootstrap)
 
     return bootstrap
 
