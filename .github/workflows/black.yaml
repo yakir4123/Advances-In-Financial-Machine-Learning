@@ -29,4 +29,4 @@ jobs:
       - name: Install Black and run
         if: steps.changed-files.outputs.any_changed == 'true'
         run: |
-          pip install black && black --check --diff ${{ steps.changed-files.outputs.all_changed_files }}
+          pip install black==24.4.2 && black --check --diff ${{ steps.changed-files.outputs.all_changed_files }}

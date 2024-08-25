@@ -1,37 +1,37 @@
 repos:
--   repo: https://github.com/jorisroovers/gitlint
+  - repo: https://github.com/jorisroovers/gitlint
     rev: 7d9981a
     hooks:
-    -   id: gitlint
+      - id: gitlint
 
--   repo: https://github.com/pre-commit/pre-commit-hooks
+  - repo: https://github.com/pre-commit/pre-commit-hooks
     rev: v3.2.0
     hooks:
-    -   id: trailing-whitespace
-    -   id: end-of-file-fixer
-    -   id: check-yaml
-        args: [--allow-multiple-documents]
-    -   id: check-added-large-files
+      - id: trailing-whitespace
+      - id: end-of-file-fixer
+      - id: check-yaml
+        args: [ --allow-multiple-documents ]
+      - id: check-added-large-files
 
--   repo: https://github.com/psf/black
+  - repo: https://github.com/psf/black
     rev: 24.4.2
     hooks:
-    -   id: black
-        args: [-t, py311, -v, --check]
+      - id: black
+        args: [ --check ]
 
--   repo: https://github.com/PyCQA/pylint
+  - repo: https://github.com/PyCQA/pylint
     rev: v2.15.5
     hooks:
-    -   id: pylint
-        args: [-j 0, --disable=all, --enable=unused-import]
+      - id: pylint
+        args: [ -j 0, --disable=all, --enable=unused-import ]
 
--   repo: https://github.com/pre-commit/mirrors-mypy
+  - repo: https://github.com/pre-commit/mirrors-mypy
     rev: v1.7.1
     hooks:
-    -   id: mypy
-        args: [--install-types, --non-interactive, --disallow-untyped-defs, --python-version, "3.11", --ignore-missing]
+      - id: mypy
+        args: [ --install-types, --non-interactive, --disallow-untyped-defs, --python-version, "3.11", --ignore-missing ]
 
--   repo: https://github.com/pre-commit/mirrors-isort
+  - repo: https://github.com/pre-commit/mirrors-isort
     rev: v5.10.1
     hooks:
       - id: isort
