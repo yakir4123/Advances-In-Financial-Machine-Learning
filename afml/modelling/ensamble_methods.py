@@ -43,25 +43,27 @@ class BaggingClassifier(BaseBaggingClassifier):
 
     def __init__(
         self,
-        n_estimators: int = 100,
+        estimator: Any,
         *,
         bootstrap_method: Callable[[int], np.ndarray] | None = None,
         **kwargs: Any
     ) -> None:
-        super().__init__(n_estimators, **kwargs)
+        super().__init__(estimator, **kwargs)
         self.bootstrap_method = bootstrap_method
 
-    def fit(self, X: Any, y: Any, sample_weight: Any = None) -> None:
+    def fit(self, X: Any, y: Any, sample_weight: Any = None) -> Any | None:
         if self.bootstrap and self.bootstrap_method is not None:
             # its nesty and probably may lead to bugs mostly on parallelism, but for learning purpose that's good enough
             _bagging._generate_bagging_indices = (
                 self._seq_bootstrap_generate_bagging_indices
             )
+        res = None
         try:
-            super().fit(X, y, sample_weight)
+            res = super().fit(X, y, sample_weight)
         finally:
             if self.bootstrap and self.bootstrap_method is not None:
                 _bagging._generate_bagging_indices = _original_bagging_bootstrap_method
+        return res
 
     def _seq_bootstrap_generate_bagging_indices(
         self,

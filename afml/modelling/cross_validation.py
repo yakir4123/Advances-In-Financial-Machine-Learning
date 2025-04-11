@@ -1,14 +1,15 @@
-from typing import Any, Iterator
+from typing import Any, Iterator, Literal
 
 import numpy as np
 import pandas as pd
 from numba import njit
+from sklearn.metrics import accuracy_score, log_loss
 from sklearn.model_selection._split import _BaseKFold
 
 
 def get_train_times(t1: pd.Series, testTimes: pd.Series) -> pd.Series:
     """
-    SNIPPET 7.1-PURGING OBSERVATION IN THE TRAINING SET
+    SNIPPET 7.1-PisortURGING OBSERVATION IN THE TRAINING SET
     Given testTimes, find the times of the training observations.
     —t1.index: Time when the observation started.
     —t1.value: Time when the observation ended.
@@ -58,7 +59,7 @@ class PurgedKFold(_BaseKFold):
         for i, j in test_starts:
             t0 = self.t1.index[i]
             test_indices = indices[i:j]
-            max_t1_idx = self.t1.index.searchsorted(self.t1[X.index[i:j]].max())
+            max_t1_idx = self.t1.index.searchsorted(self.t1.loc[X.index[i:j]].max())
             train_indices = self.t1.index.searchsorted(self.t1[self.t1 <= t0].index)
             if max_t1_idx < X.shape[0]:
                 train_indices = np.concatenate(
@@ -82,3 +83,48 @@ def _get_train_times_fast(
         mask &= ~((t0 <= test_start) & (test_end <= t1))  # train envelops test
 
     return mask
+
+
+def cv_score(
+    classifier: Any,
+    X: pd.DataFrame,
+    y: pd.Series,
+    sample_weight: pd.Series,
+    scoring: Literal["neg_log_loss", "accuracy"] = "neg_log_loss",
+    t1: pd.Series | None = None,
+    n_splits: int = 1,
+    cv_gen: _BaseKFold | None = None,
+    pct_embargo: float = 0.0,
+) -> np.ndarray:
+    """
+    SNIPPET 7.4 USING THE PurgedKFold CLASS
+    With some bug fixes that scikit has
+    """
+    if cv_gen is None:
+        cv_gen = PurgedKFold(n_splits=n_splits, t1=t1, pct_embargo=pct_embargo)
+
+    scores = np.zeros(cv_gen.n_splits)
+    for i, (train_idx, test_idx) in enumerate(cv_gen.split(X=X)):
+        fit = classifier.fit(
+            X=X.iloc[train_idx, :],
+            y=y.iloc[train_idx],
+            sample_weight=sample_weight.iloc[train_idx].values,
+        )
+        if scoring == "neg_log_loss":
+            prob = fit.predict_proba(X.iloc[test_idx, :])
+            score = -log_loss(
+                y.iloc[test_idx],
+                prob,
+                sample_weight=sample_weight.iloc[test_idx].values,
+                labels=classifier.classes_,
+            )
+        else:
+            pred = fit.predict(X.iloc[test_idx, :])
+            score = accuracy_score(
+                y.iloc[test_idx],
+                pred,
+                sample_weight=sample_weight.iloc[test_idx].values,
+            )
+        scores[i] = score
+
+    return scores
